@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pantrypilot-app
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/recipes"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Optional local PostgreSQL if running without remote Supabase instance
+  postgres:
+    image: postgres:15-alpine
+    container_name: pantrypilot-db
+    environment:
+      POSTGRES_DB: pantrypilot
+      POSTGRES_USER: pantrypilot
+      POSTGRES_PASSWORD: pantrypilot_secret
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./database/migrations/001_initial_schema.sql:/docker-entrypoint-initdb.d/01-init.sql
+      - ./database/seed/seed_data.sql:/docker-entrypoint-initdb.d/02-seed.sql
+
+volumes:
+  pgdata:

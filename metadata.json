@@ -1,0 +1,6 @@
+{
+  "name": "PantryPilot",
+  "description": "Smart Ingredient-to-Recipe Generator that matches what is in your kitchen to 100+ authentic recipes, complete with deterministic ingredient matching, pantry basics, substitutions, and AI chef generation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
