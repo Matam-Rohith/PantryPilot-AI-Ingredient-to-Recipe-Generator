@@ -17,7 +17,7 @@ import { DEFAULT_PANTRY_BASICS } from '../server/data/ingredients.js';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'search' | 'saved' | 'shopping' | 'history' | 'dashboard'>('search');
-  const [activeCategorySection, setActiveCategorySection] = useState<'CAN_MAKE_NOW' | 'ALMOST_THERE' | 'EXPLORE' | 'ALL'>('ALL');
+  const [activeCategorySection, setActiveCategorySection] = useState<'CAN_MAKE_NOW' | 'ALMOST_THERE' | 'EXPLORE' | 'ALL'>('CAN_MAKE_NOW');
 
   // Ingredients and Matching State
   const [extractedIngredients, setExtractedIngredients] = useState<ExtractedIngredient[]>([]);
@@ -27,14 +27,16 @@ export default function App() {
   const [canMakeNow, setCanMakeNow] = useState<RecipeMatchResult[]>([]);
   const [almostThere, setAlmostThere] = useState<RecipeMatchResult[]>([]);
   const [explore, setExplore] = useState<RecipeMatchResult[]>([]);
+  const [exactRecipeMatch, setExactRecipeMatch] = useState<RecipeMatchResult | null>(null);
+  const [lastSearchQuery, setLastSearchQuery] = useState<string>('I have 2 eggs, rice, onion, tomato and green chilli.');
 
-  // Filters State
+  // Filters State - Default to using ONLY entered ingredients
   const [filters, setFilters] = useState<FilterPreferences>({
     maxTime: undefined,
     difficulty: 'Any',
     cuisine: 'Any',
     diet: 'Any',
-    useOnlyMyIngredients: false,
+    useOnlyMyIngredients: true,
     leftoverMode: false
   });
 
@@ -115,6 +117,9 @@ export default function App() {
   // 2. Ingredient Extraction
   const handleExtractText = async (text: string) => {
     setIsExtracting(true);
+    setLastSearchQuery(text);
+    // When user enters ingredients, show only recipes that can be made with entered ingredients
+    setActiveCategorySection('CAN_MAKE_NOW');
     try {
       const res = await fetch('/api/ingredients/extract', {
         method: 'POST',
@@ -124,7 +129,9 @@ export default function App() {
       const data = await res.json();
       if (data.ingredients) {
         setExtractedIngredients(data.ingredients);
-        executeMatching(data.ingredients.map((i: any) => i.normalizedName), userPantryBasics, filters);
+        const updatedFilters = { ...filters, useOnlyMyIngredients: true };
+        setFilters(updatedFilters);
+        executeMatching(data.ingredients.map((i: any) => i.normalizedName), userPantryBasics, updatedFilters, text);
       }
     } catch (err) {
       console.error('Extraction failed:', err);
@@ -137,7 +144,8 @@ export default function App() {
   const executeMatching = useCallback(async (
     ingredients: string[],
     pantryBasics: string[],
-    currentFilters: FilterPreferences
+    currentFilters: FilterPreferences,
+    rawTextQuery?: string
   ) => {
     setIsMatching(true);
     try {
@@ -150,7 +158,8 @@ export default function App() {
         body: JSON.stringify({
           ingredients,
           pantryBasics,
-          filters: currentFilters
+          filters: currentFilters,
+          rawText: rawTextQuery !== undefined ? rawTextQuery : lastSearchQuery
         })
       });
       const data = await res.json();
@@ -158,12 +167,13 @@ export default function App() {
       setCanMakeNow(data.canMakeNow || []);
       setAlmostThere(data.almostThere || []);
       setExplore(data.explore || []);
+      setExactRecipeMatch(data.exactRecipeMatch || null);
     } catch (err) {
       console.error('Matching failed:', err);
     } finally {
       setIsMatching(false);
     }
-  }, [currentUser]);
+  }, [currentUser, lastSearchQuery]);
 
   // Re-run matching when filters change
   const handleFilterChange = (newFilters: FilterPreferences) => {
@@ -418,26 +428,81 @@ export default function App() {
               {/* Header Title for Current Category */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-stone-200 mb-6 gap-2">
                 <div>
-                  <h2 className="text-xl sm:text-2xl font-serif font-bold text-slate-900">
-                    {activeCategorySection === 'CAN_MAKE_NOW' && 'Can Make Now (100% Core Match)'}
-                    {activeCategorySection === 'ALMOST_THERE' && 'Almost There (Missing 1-2 Items)'}
-                    {activeCategorySection === 'EXPLORE' && 'Explore (Dishes using your ingredients)'}
-                    {activeCategorySection === 'ALL' && 'All Recommended Recipes'}
-                  </h2>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Showing {displayedMatches.length} recipe{displayedMatches.length !== 1 ? 's' : ''} ranked by ingredient match and feasibility.
+                  <div className="flex items-center space-x-2">
+                    <h2 className="text-xl sm:text-2xl font-serif font-bold text-slate-900">
+                      {activeCategorySection === 'CAN_MAKE_NOW' && 'Recipes Made With Your Entered Ingredients'}
+                      {activeCategorySection === 'ALMOST_THERE' && 'Almost There (Missing 1-2 Items)'}
+                      {activeCategorySection === 'EXPLORE' && 'Explore (Dishes using your ingredients)'}
+                      {activeCategorySection === 'ALL' && 'All Recommended Recipes'}
+                    </h2>
+                    {activeCategorySection === 'CAN_MAKE_NOW' && (
+                      <span className="hidden sm:inline-block px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                        100% Core Match Only
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    {activeCategorySection === 'CAN_MAKE_NOW'
+                      ? `Showing only recipes you can prepare using the ingredients you entered (0 missing ingredients).`
+                      : `Showing ${displayedMatches.length} recipe${displayedMatches.length !== 1 ? 's' : ''} ranked by ingredient match and feasibility.`}
                   </p>
                 </div>
 
-                {/* AI Recipe Generator Callout */}
-                <button
-                  onClick={() => setIsAiModalOpen(true)}
-                  className="inline-flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-bold text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300 transition-colors self-start sm:self-center shadow-2xs cursor-pointer"
-                >
-                  <Sparkles className="w-4 h-4 text-amber-600 animate-pulse" />
-                  <span>Create an AI Recipe from what you have</span>
-                </button>
+                {/* Almost There Toggle or AI Recipe Generator Callout */}
+                <div className="flex items-center space-x-2">
+                  {activeCategorySection === 'CAN_MAKE_NOW' && almostThere.length > 0 && (
+                    <button
+                      onClick={() => setActiveCategorySection('ALMOST_THERE')}
+                      className="inline-flex items-center space-x-1 px-3 py-1.5 rounded-xl text-xs font-semibold text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-300 transition-colors cursor-pointer"
+                    >
+                      <span>Also see {almostThere.length} almost-there recipes</span>
+                    </button>
+                  )}
+                  {activeCategorySection !== 'CAN_MAKE_NOW' && canMakeNow.length > 0 && (
+                    <button
+                      onClick={() => setActiveCategorySection('CAN_MAKE_NOW')}
+                      className="inline-flex items-center space-x-1 px-3 py-1.5 rounded-xl text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 transition-colors cursor-pointer"
+                    >
+                      <span>Back to strictly entered ingredients ({canMakeNow.length})</span>
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setIsAiModalOpen(true)}
+                    className="inline-flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300 transition-colors cursor-pointer shadow-2xs"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
+                    <span className="hidden md:inline">Create AI Recipe</span>
+                  </button>
+                </div>
               </div>
+
+              {/* Exact Recipe Spotlight Card if user searched for a recipe directly */}
+              {exactRecipeMatch && (
+                <div className="mb-6 p-4 rounded-2xl bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-400 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 rounded-xl bg-amber-600 text-white flex items-center justify-center font-bold shrink-0 shadow-2xs">
+                      ★
+                    </div>
+                    <div>
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-amber-900">
+                        Direct Entered Recipe Found
+                      </div>
+                      <div className="text-base font-serif font-bold text-slate-900">
+                        {exactRecipeMatch.recipe.name}
+                      </div>
+                      <div className="text-xs text-slate-600">
+                        {exactRecipeMatch.matchPercentage}% match with your kitchen · {exactRecipeMatch.recipe.prep_time + exactRecipeMatch.recipe.cook_time} mins · {exactRecipeMatch.recipe.cuisine}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setSelectedRecipeId(exactRecipeMatch.recipe.id)}
+                    className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl shadow-xs transition-colors cursor-pointer self-start sm:self-center"
+                  >
+                    Cook This Recipe
+                  </button>
+                </div>
+              )}
 
               {/* Grid or Empty State */}
               {isMatching ? (
@@ -447,16 +512,26 @@ export default function App() {
               ) : displayedMatches.length === 0 ? (
                 <div className="py-16 text-center bg-white rounded-3xl border border-dashed border-stone-300 max-w-md mx-auto p-8">
                   <Utensils className="w-10 h-10 text-stone-300 mx-auto mb-2" />
-                  <h3 className="text-base font-bold text-slate-700">No matching recipes found</h3>
+                  <h3 className="text-base font-bold text-slate-700">No exact 100% matches with only these items</h3>
                   <p className="text-xs text-slate-500 mt-1">
-                    Try broadening your filters or click &quot;Create an AI Recipe&quot; to synthesize an original dish with your specific ingredients.
+                    You can view recipes that need only 1 or 2 extra pantry items, or let our AI Chef create an original dish tailored to your exact ingredients.
                   </p>
-                  <button
-                    onClick={() => setIsAiModalOpen(true)}
-                    className="mt-4 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
-                  >
-                    Generate with AI Chef
-                  </button>
+                  <div className="mt-4 flex items-center justify-center space-x-2">
+                    {almostThere.length > 0 && (
+                      <button
+                        onClick={() => setActiveCategorySection('ALMOST_THERE')}
+                        className="px-4 py-2 bg-stone-800 hover:bg-stone-900 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                      >
+                        View {almostThere.length} Almost-There Recipes
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setIsAiModalOpen(true)}
+                      className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                    >
+                      Generate with AI Chef
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">

@@ -55,7 +55,7 @@ app.post('/api/ingredients/extract', async (req: Request, res: Response) => {
 // 2. Match recipes based on user ingredients & pantry basics
 app.post('/api/recipes/match', (req: Request, res: Response) => {
   try {
-    const { ingredients = [], pantryBasics, filters = {} } = req.body;
+    const { ingredients = [], pantryBasics, filters = {}, rawText = '' } = req.body;
     const userId = getUserId(req);
 
     // If pantryBasics not supplied in body, load from user preferences
@@ -66,15 +66,16 @@ app.post('/api/recipes/match', (req: Request, res: Response) => {
     const matchResult = matchRecipes(allRecipes, {
       userIngredients: ingredients,
       userPantryBasics: activePantryBasics,
-      filters
+      filters,
+      rawQuery: rawText
     });
 
     // Record in search history if ingredients were provided
     if (ingredients.length > 0) {
-      const rawText = ingredients.join(', ');
+      const recordedText = rawText || ingredients.join(', ');
       store.addSearchHistory(
         userId,
-        rawText,
+        recordedText,
         ingredients.map((name: string) => ({ name, normalizedName: name })),
         matchResult.allMatches.length
       );
@@ -85,7 +86,8 @@ app.post('/api/recipes/match', (req: Request, res: Response) => {
       canMakeNow: matchResult.canMakeNow,
       almostThere: matchResult.almostThere,
       explore: matchResult.explore,
-      allMatches: matchResult.allMatches
+      allMatches: matchResult.allMatches,
+      exactRecipeMatch: matchResult.exactRecipeMatch || null
     });
   } catch (err: any) {
     console.error('Error in /api/recipes/match:', err);

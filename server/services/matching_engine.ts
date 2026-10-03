@@ -5,6 +5,7 @@ export interface MatchingOptions {
   userIngredients: string[]; // Normalized names
   userPantryBasics?: string[]; // Normalized names
   filters?: FilterPreferences;
+  rawQuery?: string;
 }
 
 export function matchRecipes(recipes: Recipe[], options: MatchingOptions): {
@@ -12,18 +13,32 @@ export function matchRecipes(recipes: Recipe[], options: MatchingOptions): {
   canMakeNow: RecipeMatchResult[];
   almostThere: RecipeMatchResult[];
   explore: RecipeMatchResult[];
+  exactRecipeMatch?: RecipeMatchResult;
 } {
   const userIngredients = (options.userIngredients || []).map(normalizeIngredientName);
   const userPantryBasics = (options.userPantryBasics || DEFAULT_PANTRY_BASICS).map(normalizeIngredientName);
   const filters = options.filters || {};
+  const rawQuery = (options.rawQuery || filters.searchQuery || '').toLowerCase().trim();
+
+  // Clean rawQuery from filler words
+  const cleanQuery = rawQuery
+    .replace(/\b(i have|there are|i've got|we have|in my kitchen|in my fridge|only|some|recipe for|how to make)\b/gi, '')
+    .trim();
 
   // Set of all available items (user ingredients + pantry basics)
   const userInventorySet = new Set<string>([...userIngredients, ...userPantryBasics]);
   const userIngredientSet = new Set<string>(userIngredients);
 
   const matchedResults: RecipeMatchResult[] = [];
+  let exactRecipeMatch: RecipeMatchResult | undefined;
 
   for (const recipe of recipes) {
+    const recipeNameLower = recipe.name.toLowerCase();
+    const isDirectNameMatch = cleanQuery.length > 2 && (
+      recipeNameLower === cleanQuery ||
+      recipeNameLower.includes(cleanQuery) ||
+      cleanQuery.includes(recipeNameLower)
+    );
     // 1. Filter checks (diet, cuisine, maxTime, difficulty, servings)
     if (filters.diet && filters.diet !== 'Any') {
       if (filters.diet === 'Vegetarian' && (recipe.diet === 'Non-vegetarian' || recipe.diet === 'Eggitarian')) {
@@ -155,7 +170,7 @@ export function matchRecipes(recipes: Recipe[], options: MatchingOptions): {
     }
 
     // Strict filter: "Use only my ingredients"
-    if (filters.useOnlyMyIngredients && !canMakeNow) {
+    if (filters.useOnlyMyIngredients && !canMakeNow && !isDirectNameMatch) {
       continue;
     }
 
@@ -167,6 +182,9 @@ export function matchRecipes(recipes: Recipe[], options: MatchingOptions): {
     // +10 for quick cooking time (< 15 mins)
     // +5 for easy difficulty
     let rankingScore = matchPercentage;
+    if (isDirectNameMatch) {
+      rankingScore += 1000;
+    }
     rankingScore -= missingIngredients.length * 25;
     rankingScore += matchedIngredients.length * 15;
 
@@ -182,7 +200,7 @@ export function matchRecipes(recipes: Recipe[], options: MatchingOptions): {
       rankingScore += 5;
     }
 
-    matchedResults.push({
+    const resultItem: RecipeMatchResult = {
       recipe,
       matchPercentage,
       matchedIngredients,
@@ -194,11 +212,24 @@ export function matchRecipes(recipes: Recipe[], options: MatchingOptions): {
       isAlmostThere,
       categorySection,
       rankingScore
-    });
+    };
+
+    if (isDirectNameMatch && !exactRecipeMatch) {
+      exactRecipeMatch = resultItem;
+    }
+
+    matchedResults.push(resultItem);
   }
 
   // Sort descending by rankingScore
   matchedResults.sort((a, b) => {
+    // Exact name matches always on top
+    const aExact = cleanQuery.length > 2 && a.recipe.name.toLowerCase().includes(cleanQuery);
+    const bExact = cleanQuery.length > 2 && b.recipe.name.toLowerCase().includes(cleanQuery);
+    if (aExact !== bExact) {
+      return aExact ? -1 : 1;
+    }
+
     // 100% matches always rank higher than non-100% matches
     if (a.canMakeNow !== b.canMakeNow) {
       return a.canMakeNow ? -1 : 1;
@@ -212,14 +243,15 @@ export function matchRecipes(recipes: Recipe[], options: MatchingOptions): {
     return b.rankingScore - a.rankingScore;
   });
 
-  const canMakeNow = matchedResults.filter(r => r.categorySection === 'CAN_MAKE_NOW');
-  const almostThere = matchedResults.filter(r => r.categorySection === 'ALMOST_THERE');
-  const explore = matchedResults.filter(r => r.categorySection === 'EXPLORE');
+  const canMakeNow = matchedResults.filter(r => r.categorySection === 'CAN_MAKE_NOW' || (cleanQuery.length > 2 && r.recipe.name.toLowerCase().includes(cleanQuery)));
+  const almostThere = matchedResults.filter(r => r.categorySection === 'ALMOST_THERE' && !canMakeNow.includes(r));
+  const explore = matchedResults.filter(r => r.categorySection === 'EXPLORE' && !canMakeNow.includes(r));
 
   return {
     allMatches: matchedResults,
     canMakeNow,
     almostThere,
-    explore
+    explore,
+    exactRecipeMatch
   };
 }
