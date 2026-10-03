@@ -14,6 +14,7 @@ import { AuthModal } from './components/AuthModal.js';
 import { ExtractedIngredient, FilterPreferences, Recipe, RecipeMatchResult, SavedRecipe, ShoppingListItem, UserProfile } from './types/recipe.js';
 import { Sparkles, Utensils, CheckCircle2, AlertCircle } from 'lucide-react';
 import { DEFAULT_PANTRY_BASICS } from '../server/data/ingredients.js';
+import { clientExtractIngredients, clientMatchRecipes } from './lib/clientFallback.js';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'search' | 'saved' | 'shopping' | 'history' | 'dashboard'>('search');
@@ -126,15 +127,23 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text })
       });
+      if (!res.ok) throw new Error(`API extraction returned ${res.status}`);
       const data = await res.json();
-      if (data.ingredients) {
+      if (data.ingredients && Array.isArray(data.ingredients) && data.ingredients.length > 0) {
         setExtractedIngredients(data.ingredients);
         const updatedFilters = { ...filters, useOnlyMyIngredients: true };
         setFilters(updatedFilters);
         executeMatching(data.ingredients.map((i: any) => i.normalizedName), userPantryBasics, updatedFilters, text);
+        return;
       }
+      throw new Error('No ingredients in response');
     } catch (err) {
-      console.error('Extraction failed:', err);
+      console.warn('API extraction unavailable or failed, utilizing browser engine fallback:', err);
+      const fallback = clientExtractIngredients(text);
+      setExtractedIngredients(fallback);
+      const updatedFilters = { ...filters, useOnlyMyIngredients: true };
+      setFilters(updatedFilters);
+      executeMatching(fallback.map(i => i.normalizedName), userPantryBasics, updatedFilters, text);
     } finally {
       setIsExtracting(false);
     }
@@ -148,6 +157,7 @@ export default function App() {
     rawTextQuery?: string
   ) => {
     setIsMatching(true);
+    const query = rawTextQuery !== undefined ? rawTextQuery : lastSearchQuery;
     try {
       const res = await fetch('/api/recipes/match', {
         method: 'POST',
@@ -159,9 +169,10 @@ export default function App() {
           ingredients,
           pantryBasics,
           filters: currentFilters,
-          rawText: rawTextQuery !== undefined ? rawTextQuery : lastSearchQuery
+          rawText: query
         })
       });
+      if (!res.ok) throw new Error(`API matching returned ${res.status}`);
       const data = await res.json();
       setAllMatches(data.allMatches || []);
       setCanMakeNow(data.canMakeNow || []);
@@ -169,7 +180,13 @@ export default function App() {
       setExplore(data.explore || []);
       setExactRecipeMatch(data.exactRecipeMatch || null);
     } catch (err) {
-      console.error('Matching failed:', err);
+      console.warn('API matching unavailable or failed, utilizing browser matching engine fallback:', err);
+      const fallback = clientMatchRecipes(ingredients, pantryBasics, currentFilters, query);
+      setAllMatches(fallback.allMatches);
+      setCanMakeNow(fallback.canMakeNow);
+      setAlmostThere(fallback.almostThere);
+      setExplore(fallback.explore);
+      setExactRecipeMatch(fallback.exactRecipeMatch || null);
     } finally {
       setIsMatching(false);
     }

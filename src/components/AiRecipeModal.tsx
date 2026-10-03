@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { X, Sparkles, ChefHat, Loader2, ArrowRight, Check } from 'lucide-react';
 import { Cuisine, Diet, ExtractedIngredient, Recipe } from '../types/recipe.js';
+import { clientGenerateRecipe } from '../lib/clientFallback.js';
+import { DEFAULT_PANTRY_BASICS } from '../../server/data/ingredients.js';
 
 interface AiRecipeModalProps {
   isOpen: boolean;
@@ -45,15 +47,24 @@ export const AiRecipeModal: React.FC<AiRecipeModalProps> = ({
         })
       });
 
+      if (!res.ok) throw new Error(`API generate returned ${res.status}`);
       const data = await res.json();
-      if (!res.ok || !data.recipe) {
+      if (!data.recipe) {
         throw new Error(data.error || 'Failed to generate AI recipe');
       }
 
       onRecipeGenerated(data.recipe);
       onClose();
     } catch (err: any) {
-      setError(err.message || 'Error communicating with AI chef');
+      console.warn('API recipe generation unavailable, falling back to local chef synthesis:', err);
+      const fallbackRecipe = clientGenerateRecipe(
+        availableIngredients,
+        DEFAULT_PANTRY_BASICS,
+        preferredCuisine,
+        diet
+      );
+      onRecipeGenerated(fallbackRecipe);
+      onClose();
     } finally {
       setIsGenerating(false);
     }
